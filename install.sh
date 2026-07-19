@@ -11,7 +11,7 @@ echo -e "${GREEN}=======================================${NC}"
 echo -e "${GREEN}   Instalador Automático del Bot AWS   ${NC}"
 echo -e "${GREEN}=======================================${NC}"
 
-# 1. DEFINIR EL REPOSITORIO (YA NO LO PREGUNTA)
+# 1. DEFINIR EL REPOSITORIO FIJO
 REPO_URL="https://github.com/Yelsinml10/Bot-telegram.git"
 REPO_NAME="Bot-telegram"
 INSTALL_DIR="/root/$REPO_NAME"
@@ -48,7 +48,6 @@ cd "$INSTALL_DIR" || { echo -e "${RED}❌ Error al entrar a la carpeta del proye
 # 5. INYECTAR LOS DATOS DIRECTAMENTE EN EL CÓDIGO
 echo -e "\n${CYAN}✏️ PASO 4: APLICANDO TUS DATOS AL CÓDIGO...${NC}"
 if [ -f "$INSTALL_DIR/bot.py" ]; then
-    # Reemplaza el token y el ID en el código de Python
     sed -i "s/PON_AQUI_TU_TOKEN_REAL/$BOT_TOKEN/g" "$INSTALL_DIR/bot.py"
     sed -i "s/5489750950/$ADMIN_ID/g" "$INSTALL_DIR/bot.py"
     echo -e "${GREEN}✅ Datos inyectados correctamente.${NC}"
