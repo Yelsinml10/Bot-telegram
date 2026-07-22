@@ -11,17 +11,15 @@ from botocore.exceptions import ClientError
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
-
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "PON_AQUI_TU_TOKEN_REAL")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 ADMIN_FILE = Path(os.getenv("ADMIN_FILE", "admins.json"))
 INITIAL_ADMIN_ID = int(os.getenv("ADMIN_ID", "5489750950"))
 
 if TOKEN == "PON_AQUI_TU_TOKEN_REAL":
-    raise RuntimeError("Configura la variable TELEGRAM_BOT_TOKEN antes de iniciar el bot.")
+    raise RuntimeError(
+        "Configura la variable TELEGRAM_BOT_TOKEN antes de iniciar el bot."
+    )
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,6 +61,7 @@ def load_admins():
 
 def save_admins(admins=None):
     values = sorted(set(admins if admins is not None else ADMIN_IDS))
+
     with file_lock:
         with ADMIN_FILE.open("w", encoding="utf-8") as file:
             json.dump({"admin_ids": values}, file, indent=2)
@@ -83,6 +82,7 @@ def authorized_message(message):
     if not is_admin(message.chat.id):
         bot.reply_to(message, "⛔ <b>Acceso no autorizado.</b>")
         return False
+
     return True
 
 
@@ -94,6 +94,7 @@ def authorized_callback(call):
             show_alert=True
         )
         return False
+
     return True
 
 
@@ -104,7 +105,11 @@ def authorized_callback(call):
 def safe_error(error):
     if isinstance(error, ClientError):
         data = error.response.get("Error", {})
-        return f"{data.get('Code', 'AWS_ERROR')}: {data.get('Message', str(error))}"
+        return (
+            f"{data.get('Code', 'AWS_ERROR')}: "
+            f"{data.get('Message', str(error))}"
+        )
+
     return str(error)
 
 
@@ -129,7 +134,11 @@ def get_distribution(distribution_id):
 def distribution_name(distribution):
     aliases = distribution.get("DistributionConfig", {}).get("Aliases", {})
     items = aliases.get("Items", [])
-    return items[0] if items else distribution.get("DomainName", "Sin alias")
+
+    return items[0] if items else distribution.get(
+        "DomainName",
+        "Sin alias"
+    )
 
 
 def valid_domain(value):
@@ -177,6 +186,7 @@ def acm_menu():
     markup.add(
         callback_button("🔒 Solicitar certificado", "request_acm"),
         callback_button("📋 Listar certificados", "list_acm"),
+        callback_button("🗑️ Eliminar certificado", "delete_acm"),
         callback_button("🔙 Volver al inicio", "menu_principal")
     )
     return markup
@@ -193,14 +203,42 @@ def admin_menu():
     return markup
 
 
-def distribution_actions(distribution_id):
+def distribution_actions(distribution_id, distribution=None):
     markup = InlineKeyboardMarkup(row_width=1)
+
     markup.add(
-        callback_button("✏️ Editar distribución", f"edit_dist_{distribution_id}"),
-        callback_button("⏸️ Deshabilitar distribución", f"disable_dist_{distribution_id}"),
-        callback_button("🧹 Invalidar caché", f"invalidate_dist_{distribution_id}"),
+        callback_button(
+            "✏️ Editar distribución",
+            f"edit_dist_{distribution_id}"
+        ),
+        callback_button(
+            "⏸️ Deshabilitar distribución",
+            f"disable_dist_{distribution_id}"
+        ),
+        callback_button(
+            "🧹 Invalidar caché",
+            f"invalidate_dist_{distribution_id}"
+        )
+    )
+
+    if distribution:
+        config = distribution.get("DistributionConfig", {})
+
+        if (
+            not config.get("Enabled", True)
+            and distribution.get("Status") == "Deployed"
+        ):
+            markup.add(
+                callback_button(
+                    "🗑️ Eliminar distribución",
+                    f"delete_dist_{distribution_id}"
+                )
+            )
+
+    markup.add(
         callback_button("🔙 Volver a la lista", "manage_dists")
     )
+
     return markup
 
 
@@ -252,7 +290,8 @@ def handle_callback(call):
             edit_message(
                 chat_id,
                 message_id,
-                "⚙️ <b>PANEL DE CONTROL AWS</b>\nSelecciona una categoría:",
+                "⚙️ <b>PANEL DE CONTROL AWS</b>\n"
+                "Selecciona una categoría:",
                 main_menu()
             )
 
@@ -260,7 +299,8 @@ def handle_callback(call):
             edit_message(
                 chat_id,
                 message_id,
-                "🌐 <b>GESTIÓN DE CLOUDFRONT</b>\nSelecciona una opción:",
+                "🌐 <b>GESTIÓN DE CLOUDFRONT</b>\n"
+                "Selecciona una opción:",
                 cloudfront_menu()
             )
 
@@ -306,17 +346,47 @@ def handle_callback(call):
                 "Ejemplo: <code>E1A2B3C4D5E6F7</code>"
             )
 
+        elif action.startswith("confirm_delete_dist_"):
+            confirm_delete_distribution(
+                chat_id,
+                message_id,
+                action[len("confirm_delete_dist_"):]
+            )
+
+        elif action.startswith("delete_dist_"):
+            delete_distribution(
+                chat_id,
+                message_id,
+                action[len("delete_dist_"):]
+            )
+
         elif action.startswith("dist_"):
-            show_distribution(chat_id, message_id, action[5:])
+            show_distribution(
+                chat_id,
+                message_id,
+                action[len("dist_"):]
+            )
 
         elif action.startswith("edit_dist_"):
-            start_edit_distribution(chat_id, message_id, action[10:])
+            start_edit_distribution(
+                chat_id,
+                message_id,
+                action[len("edit_dist_"):]
+            )
 
         elif action.startswith("disable_dist_"):
-            disable_distribution(chat_id, message_id, action[13:])
+            disable_distribution(
+                chat_id,
+                message_id,
+                action[len("disable_dist_"):]
+            )
 
         elif action.startswith("invalidate_dist_"):
-            invalidate_distribution(chat_id, message_id, action[16:])
+            invalidate_distribution(
+                chat_id,
+                message_id,
+                action[len("invalidate_dist_"):]
+            )
 
         elif action == "request_acm":
             user_states[chat_id] = {
@@ -335,6 +405,23 @@ def handle_callback(call):
         elif action == "list_acm":
             list_certificates(chat_id, message_id)
 
+        elif action == "delete_acm":
+            show_certificates_to_delete(chat_id, message_id)
+
+        elif action.startswith("confirm_delete_cert_"):
+            confirm_delete_certificate(
+                chat_id,
+                message_id,
+                action[len("confirm_delete_cert_"):]
+            )
+
+        elif action.startswith("delete_cert_"):
+            delete_certificate(
+                chat_id,
+                message_id,
+                action[len("delete_cert_"):]
+            )
+
         elif action == "manage_admins":
             edit_message(
                 chat_id,
@@ -345,7 +432,10 @@ def handle_callback(call):
 
         elif action == "add_admin":
             if not is_super_admin(call.from_user.id):
-                bot.send_message(chat_id, "⛔ Solo el superadministrador puede agregar admins.")
+                bot.send_message(
+                    chat_id,
+                    "⛔ Solo el superadministrador puede agregar admins."
+                )
                 return
 
             user_states[chat_id] = {
@@ -367,14 +457,21 @@ def handle_callback(call):
             show_admins_to_remove(chat_id, message_id)
 
         elif action.startswith("remove_admin_"):
-            remove_admin(chat_id, message_id, action[13:])
+            remove_admin(
+                chat_id,
+                message_id,
+                action[len("remove_admin_"):]
+            )
 
         elif action == "help":
             show_help(chat_id, message_id)
 
     except Exception as error:
         logger.exception("Error procesando callback")
-        bot.send_message(chat_id, f"❌ <b>Error:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error:</b> {safe_error(error)}"
+        )
 
 
 # ============================================================
@@ -405,11 +502,12 @@ def handle_text(message):
             return
 
         clear_state(chat_id)
+
         invalidation = create_invalidation(value)
 
         bot.reply_to(
             message,
-            f"✅ <b>Invalidación iniciada</b>\n\n"
+            "✅ <b>Invalidación iniciada</b>\n\n"
             f"Distribución: <code>{value}</code>\n"
             f"ID: <code>{invalidation}</code>"
         )
@@ -434,6 +532,7 @@ def handle_text(message):
         else:
             ADMIN_IDS.append(user_id)
             save_admins()
+
             bot.reply_to(
                 message,
                 f"✅ Administrador agregado: <code>{user_id}</code>"
@@ -494,21 +593,26 @@ def handle_create_input(message, state, step, value):
             )
 
             distribution = response["Distribution"]
+            alias = state["alias"]
             clear_state(chat_id)
 
             bot.reply_to(
                 message,
                 "✅ <b>DISTRIBUCIÓN CREADA</b>\n\n"
                 f"🆔 ID: <code>{distribution['Id']}</code>\n"
-                f"🌐 Dominio CloudFront: <code>{distribution['DomainName']}</code>\n"
+                f"🌐 Dominio CloudFront: "
+                f"<code>{distribution['DomainName']}</code>\n"
                 f"📊 Estado: <code>{distribution['Status']}</code>\n\n"
-                f"Configura el CNAME:\n"
-                f"<code>{state['alias']}</code> → "
+                "Configura el CNAME:\n"
+                f"<code>{alias}</code> → "
                 f"<code>{distribution['DomainName']}</code>"
             )
 
         except Exception as error:
-            bot.reply_to(message, f"❌ <b>Error:</b> {safe_error(error)}")
+            bot.reply_to(
+                message,
+                f"❌ <b>Error:</b> {safe_error(error)}"
+            )
 
 
 def build_distribution_config(alias, origin, certificate_arn):
@@ -585,7 +689,10 @@ def start_edit_distribution(chat_id, message_id, distribution_id):
 
         aliases = config.get("Aliases", {}).get("Items", [])
         origins = config.get("Origins", {}).get("Items", [])
-        certificate = config.get("ViewerCertificate", {}).get("ACMCertificateArn", "")
+        certificate = config.get(
+            "ViewerCertificate",
+            {}
+        ).get("ACMCertificateArn", "")
 
         alias = aliases[0] if aliases else ""
         origin = origins[0].get("DomainName", "") if origins else ""
@@ -607,18 +714,22 @@ def start_edit_distribution(chat_id, message_id, distribution_id):
             "✏️ <b>EDITAR DISTRIBUCIÓN</b>\n\n"
             f"ID: <code>{distribution_id}</code>\n\n"
             f"Alias actual: <code>{alias or 'Sin alias'}</code>\n"
-            "Envía el nuevo alias o escribe <code>-</code> para conservarlo."
+            "Envía el nuevo alias o escribe <code>-</code> "
+            "para conservarlo."
         )
 
     except Exception as error:
-        bot.send_message(chat_id, f"❌ <b>Error:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error:</b> {safe_error(error)}"
+        )
 
 
 def handle_edit_input(message, state, step, value):
     chat_id = message.chat.id
 
     if value == "-":
-        value = state.get(step_value_key(step), "")
+        value = state.get(step, "")
 
     if step == "alias":
         if value and not valid_domain(value):
@@ -632,7 +743,8 @@ def handle_edit_input(message, state, step, value):
             message,
             f"✅ Alias: <code>{value or 'Sin alias'}</code>\n\n"
             f"Origen actual: <code>{state['origin']}</code>\n"
-            "Envía el nuevo origen o <code>-</code> para conservarlo."
+            "Envía el nuevo origen o <code>-</code> "
+            "para conservarlo."
         )
 
     elif step == "origin":
@@ -646,8 +758,10 @@ def handle_edit_input(message, state, step, value):
         bot.reply_to(
             message,
             f"✅ Origen: <code>{value}</code>\n\n"
-            f"Certificado actual:\n<code>{state['certificate_arn'] or 'No configurado'}</code>\n"
-            "Envía el nuevo ARN o <code>-</code> para conservarlo."
+            "Certificado actual:\n"
+            f"<code>{state['certificate_arn'] or 'No configurado'}</code>\n"
+            "Envía el nuevo ARN o <code>-</code> "
+            "para conservarlo."
         )
 
     elif step == "certificate_arn":
@@ -674,14 +788,6 @@ def handle_edit_input(message, state, step, value):
         )
 
 
-def step_value_key(step):
-    return {
-        "alias": "alias",
-        "origin": "origin",
-        "certificate_arn": "certificate_arn"
-    }.get(step, step)
-
-
 @bot.callback_query_handler(
     func=lambda call: call.data.startswith("confirm_edit_")
 )
@@ -693,7 +799,11 @@ def confirm_edit_callback(call):
     state = user_states.get(chat_id)
 
     if not state or state.get("action") != "edit_cf":
-        bot.answer_callback_query(call.id, "La sesión expiró.", show_alert=True)
+        bot.answer_callback_query(
+            call.id,
+            "La sesión expiró.",
+            show_alert=True
+        )
         return
 
     bot.answer_callback_query(call.id)
@@ -715,7 +825,9 @@ def confirm_edit_callback(call):
             "MinimumProtocolVersion": "TLSv1.2_2021"
         }
 
-        config["Comment"] = f"Managed by Telegram - {state['alias']}"
+        config["Comment"] = (
+            f"Managed by Telegram - {state['alias']}"
+        )
 
         cloudfront.update_distribution(
             Id=state["distribution_id"],
@@ -723,20 +835,23 @@ def confirm_edit_callback(call):
             DistributionConfig=config
         )
 
+        distribution_id = state["distribution_id"]
         clear_state(chat_id)
 
         edit_message(
             chat_id,
             call.message.message_id,
             "✅ <b>DISTRIBUCIÓN ACTUALIZADA</b>\n\n"
-            f"ID: <code>{state['distribution_id']}</code>\n"
-            "⏳ AWS está desplegando los cambios.\n"
-            "La propagación puede tardar varios minutos.",
+            f"ID: <code>{distribution_id}</code>\n"
+            "⏳ AWS está desplegando los cambios.",
             back_button("manage_dists")
         )
 
     except Exception as error:
-        bot.send_message(chat_id, f"❌ <b>Error al actualizar:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error al actualizar:</b> {safe_error(error)}"
+        )
 
 
 @bot.callback_query_handler(
@@ -748,6 +863,7 @@ def cancel_edit_callback(call):
 
     chat_id = call.message.chat.id
     clear_state(chat_id)
+
     bot.answer_callback_query(call.id, "Edición cancelada.")
 
     edit_message(
@@ -765,7 +881,8 @@ def cancel_edit_callback(call):
 def list_distributions(chat_id, message_id):
     try:
         items = cloudfront.list_distributions().get(
-            "DistributionList", {}
+            "DistributionList",
+            {}
         ).get("Items", [])
 
         if not items:
@@ -795,13 +912,17 @@ def list_distributions(chat_id, message_id):
         )
 
     except Exception as error:
-        bot.send_message(chat_id, f"❌ <b>Error:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error:</b> {safe_error(error)}"
+        )
 
 
 def show_distribution_list(chat_id, message_id):
     try:
         items = cloudfront.list_distributions().get(
-            "DistributionList", {}
+            "DistributionList",
+            {}
         ).get("Items", [])
 
         if not items:
@@ -817,6 +938,7 @@ def show_distribution_list(chat_id, message_id):
 
         for item in items[:20]:
             icon = "🟢" if item["Status"] == "Deployed" else "🟡"
+
             markup.add(
                 callback_button(
                     f"{icon} {distribution_name(item)}",
@@ -834,7 +956,10 @@ def show_distribution_list(chat_id, message_id):
         )
 
     except Exception as error:
-        bot.send_message(chat_id, f"❌ <b>Error:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error:</b> {safe_error(error)}"
+        )
 
 
 def show_distribution(chat_id, message_id, distribution_id):
@@ -845,32 +970,45 @@ def show_distribution(chat_id, message_id, distribution_id):
 
         aliases = config.get("Aliases", {}).get("Items", [])
         origins = config.get("Origins", {}).get("Items", [])
-        origin = origins[0].get("DomainName", "N/A") if origins else "N/A"
+
+        origin = (
+            origins[0].get("DomainName", "N/A")
+            if origins
+            else "N/A"
+        )
 
         text = (
             "⚙️ <b>DETALLE DE DISTRIBUCIÓN</b>\n\n"
             f"🆔 ID: <code>{distribution['Id']}</code>\n"
             f"🌐 CloudFront: <code>{distribution['DomainName']}</code>\n"
-            f"🏷️ Alias: <code>{', '.join(aliases) or 'Sin alias'}</code>\n"
+            f"🏷️ Alias: "
+            f"<code>{', '.join(aliases) or 'Sin alias'}</code>\n"
             f"🎯 Origen: <code>{origin}</code>\n"
             f"📊 Estado: <code>{distribution['Status']}</code>\n"
-            f"🔌 Habilitada: {'✅ Sí' if config['Enabled'] else '❌ No'}"
+            f"🔌 Habilitada: "
+            f"{'✅ Sí' if config['Enabled'] else '❌ No'}"
         )
 
         edit_message(
             chat_id,
             message_id,
             text,
-            distribution_actions(distribution_id)
+            distribution_actions(distribution_id, distribution)
         )
 
     except Exception as error:
-        bot.send_message(chat_id, f"❌ <b>Error:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error:</b> {safe_error(error)}"
+        )
 
 
 def disable_distribution(chat_id, message_id, distribution_id):
     try:
-        response = cloudfront.get_distribution_config(Id=distribution_id)
+        response = cloudfront.get_distribution_config(
+            Id=distribution_id
+        )
+
         config = response["DistributionConfig"]
         config["Enabled"] = False
 
@@ -885,12 +1023,111 @@ def disable_distribution(chat_id, message_id, distribution_id):
             message_id,
             "✅ <b>DISTRIBUCIÓN DESHABILITADA</b>\n\n"
             f"ID: <code>{distribution_id}</code>\n"
-            "⏳ Espera a que termine el despliegue para aplicar otros cambios.",
+            "⏳ Espera a que el estado sea "
+            "<code>Deployed</code> para eliminarla.",
             back_button("manage_dists")
         )
 
     except Exception as error:
-        bot.send_message(chat_id, f"❌ <b>Error:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error:</b> {safe_error(error)}"
+        )
+
+
+def delete_distribution(chat_id, message_id, distribution_id):
+    try:
+        response = get_distribution(distribution_id)
+        distribution = response["Distribution"]
+        config = distribution["DistributionConfig"]
+
+        if config.get("Enabled", True):
+            edit_message(
+                chat_id,
+                message_id,
+                "⚠️ La distribución todavía está habilitada.\n"
+                "Deshabilítala primero.",
+                back_button(f"dist_{distribution_id}")
+            )
+            return
+
+        if distribution.get("Status") != "Deployed":
+            edit_message(
+                chat_id,
+                message_id,
+                "⏳ La distribución todavía está desplegándose.\n"
+                "Espera hasta que su estado sea "
+                "<code>Deployed</code>.",
+                back_button(f"dist_{distribution_id}")
+            )
+            return
+
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            callback_button(
+                "✅ Confirmar eliminación",
+                f"confirm_delete_dist_{distribution_id}"
+            ),
+            callback_button(
+                "❌ Cancelar",
+                f"dist_{distribution_id}"
+            )
+        )
+
+        edit_message(
+            chat_id,
+            message_id,
+            "⚠️ <b>CONFIRMAR ELIMINACIÓN</b>\n\n"
+            f"ID: <code>{distribution_id}</code>\n\n"
+            "Esta acción no se puede deshacer.",
+            markup
+        )
+
+    except Exception as error:
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error:</b> {safe_error(error)}"
+        )
+
+
+def confirm_delete_distribution(chat_id, message_id, distribution_id):
+    try:
+        response = get_distribution(distribution_id)
+        distribution = response["Distribution"]
+        config = distribution["DistributionConfig"]
+
+        if config.get("Enabled", True):
+            bot.send_message(
+                chat_id,
+                "❌ La distribución debe estar deshabilitada."
+            )
+            return
+
+        if distribution.get("Status") != "Deployed":
+            bot.send_message(
+                chat_id,
+                "⏳ La distribución todavía no está desplegada."
+            )
+            return
+
+        cloudfront.delete_distribution(
+            Id=distribution_id,
+            IfMatch=response["ETag"]
+        )
+
+        edit_message(
+            chat_id,
+            message_id,
+            "✅ <b>DISTRIBUCIÓN ELIMINADA</b>\n\n"
+            f"ID: <code>{distribution_id}</code>",
+            back_button("manage_dists")
+        )
+
+    except Exception as error:
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error al eliminar:</b> {safe_error(error)}"
+        )
 
 
 def create_invalidation(distribution_id):
@@ -922,7 +1159,10 @@ def invalidate_distribution(chat_id, message_id, distribution_id):
         )
 
     except Exception as error:
-        bot.send_message(chat_id, f"❌ <b>Error:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error:</b> {safe_error(error)}"
+        )
 
 
 # ============================================================
@@ -943,12 +1183,15 @@ def request_certificate(message, domain):
             "✅ <b>Certificado solicitado</b>\n\n"
             f"Dominio: <code>{domain}</code>\n"
             f"ARN: <code>{arn}</code>\n\n"
-            "Añade el registro CNAME de validación DNS que aparece "
-            "en la consola de ACM."
+            "Añade el registro CNAME de validación DNS "
+            "que aparece en ACM."
         )
 
     except Exception as error:
-        bot.reply_to(message, f"❌ <b>Error ACM:</b> {safe_error(error)}")
+        bot.reply_to(
+            message,
+            f"❌ <b>Error ACM:</b> {safe_error(error)}"
+        )
 
 
 def list_certificates(chat_id, message_id):
@@ -990,7 +1233,150 @@ def list_certificates(chat_id, message_id):
         )
 
     except Exception as error:
-        bot.send_message(chat_id, f"❌ <b>Error:</b> {safe_error(error)}")
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error ACM:</b> {safe_error(error)}"
+        )
+
+
+def show_certificates_to_delete(chat_id, message_id):
+    try:
+        response = acm.list_certificates(
+            CertificateStatuses=[
+                "ISSUED",
+                "PENDING_VALIDATION",
+                "FAILED",
+                "VALIDATION_TIMED_OUT"
+            ]
+        )
+
+        certificates = response.get("CertificateSummaryList", [])
+
+        if not certificates:
+            edit_message(
+                chat_id,
+                message_id,
+                "📭 No hay certificados ACM para eliminar.",
+                back_button("menu_acm")
+            )
+            return
+
+        certificates = certificates[:30]
+
+        user_states[chat_id] = {
+            "action": "delete_acm",
+            "certificates": {
+                str(index): certificate["CertificateArn"]
+                for index, certificate in enumerate(certificates)
+            }
+        }
+
+        markup = InlineKeyboardMarkup(row_width=1)
+
+        for index, certificate in enumerate(certificates):
+            domain = certificate.get("DomainName", "Sin dominio")
+            status = certificate.get("Status", "N/A")
+
+            markup.add(
+                callback_button(
+                    f"🗑️ {domain} ({status})"[:64],
+                    f"delete_cert_{index}"
+                )
+            )
+
+        markup.add(
+            callback_button("🔙 Volver", "menu_acm")
+        )
+
+        edit_message(
+            chat_id,
+            message_id,
+            "🗑️ <b>SELECCIONA EL CERTIFICADO A ELIMINAR</b>",
+            markup
+        )
+
+    except Exception as error:
+        bot.send_message(
+            chat_id,
+            f"❌ <b>Error ACM:</b> {safe_error(error)}"
+        )
+
+
+def delete_certificate(chat_id, message_id, certificate_index):
+    state = user_states.get(chat_id, {})
+    certificates = state.get("certificates", {})
+
+    certificate_arn = certificates.get(str(certificate_index))
+
+    if not certificate_arn:
+        bot.answer_callback_query(
+            str(chat_id),
+            "La selección expiró. Vuelve a abrir el menú.",
+            show_alert=True
+        )
+        return
+
+    state["selected_certificate"] = certificate_arn
+
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        callback_button(
+            "✅ Confirmar eliminación",
+            f"confirm_delete_cert_{certificate_index}"
+        ),
+        callback_button(
+            "❌ Cancelar",
+            "delete_acm"
+        )
+    )
+
+    edit_message(
+        chat_id,
+        message_id,
+        "⚠️ <b>CONFIRMAR ELIMINACIÓN DEL CERTIFICADO</b>\n\n"
+        f"<code>{certificate_arn}</code>\n\n"
+        "AWS rechazará la operación si el certificado está "
+        "siendo utilizado por una distribución.",
+        markup
+    )
+
+
+def confirm_delete_certificate(
+    chat_id,
+    message_id,
+    certificate_index
+):
+    state = user_states.get(chat_id, {})
+    certificate_arn = state.get("selected_certificate")
+
+    if not certificate_arn:
+        bot.send_message(
+            chat_id,
+            "❌ La selección expiró. Vuelve a abrir el menú."
+        )
+        return
+
+    try:
+        acm.delete_certificate(
+            CertificateArn=certificate_arn
+        )
+
+        clear_state(chat_id)
+
+        edit_message(
+            chat_id,
+            message_id,
+            "✅ <b>CERTIFICADO ELIMINADO</b>\n\n"
+            f"<code>{certificate_arn}</code>",
+            back_button("menu_acm")
+        )
+
+    except Exception as error:
+        bot.send_message(
+            chat_id,
+            "❌ <b>No se pudo eliminar el certificado:</b>\n"
+            f"{safe_error(error)}"
+        )
 
 
 # ============================================================
@@ -1015,10 +1401,17 @@ def list_admins(chat_id, message_id):
 
 def show_admins_to_remove(chat_id, message_id):
     if not is_super_admin(chat_id):
-        bot.send_message(chat_id, "⛔ Solo el superadministrador puede eliminar admins.")
+        bot.send_message(
+            chat_id,
+            "⛔ Solo el superadministrador puede eliminar admins."
+        )
         return
 
-    removable = [admin_id for admin_id in ADMIN_IDS if admin_id != INITIAL_ADMIN_ID]
+    removable = [
+        admin_id
+        for admin_id in ADMIN_IDS
+        if admin_id != INITIAL_ADMIN_ID
+    ]
 
     if not removable:
         edit_message(
@@ -1039,7 +1432,9 @@ def show_admins_to_remove(chat_id, message_id):
             )
         )
 
-    markup.add(callback_button("🔙 Cancelar", "manage_admins"))
+    markup.add(
+        callback_button("🔙 Cancelar", "manage_admins")
+    )
 
     edit_message(
         chat_id,
@@ -1051,7 +1446,10 @@ def show_admins_to_remove(chat_id, message_id):
 
 def remove_admin(chat_id, message_id, admin_id):
     if not is_super_admin(chat_id):
-        bot.send_message(chat_id, "⛔ Operación no permitida.")
+        bot.send_message(
+            chat_id,
+            "⛔ Operación no permitida."
+        )
         return
 
     try:
@@ -1061,7 +1459,10 @@ def remove_admin(chat_id, message_id, admin_id):
         return
 
     if admin_id == INITIAL_ADMIN_ID:
-        bot.send_message(chat_id, "⛔ No puedes eliminar al superadministrador.")
+        bot.send_message(
+            chat_id,
+            "⛔ No puedes eliminar al superadministrador."
+        )
         return
 
     if admin_id in ADMIN_IDS:
@@ -1083,10 +1484,12 @@ def remove_admin(chat_id, message_id, admin_id):
 def show_help(chat_id, message_id):
     text = (
         "📚 <b>AYUDA DEL SISTEMA</b>\n\n"
-        "🌐 <b>CloudFront:</b> crea, lista, edita y deshabilita distribuciones.\n"
-        "✏️ <b>Editar:</b> permite cambiar alias, origen y certificado ACM.\n"
-        "🧹 <b>Caché:</b> invalida todos los objetos usando <code>/*</code>.\n"
-        "🔐 <b>ACM:</b> solicita y lista certificados.\n"
+        "🌐 <b>CloudFront:</b> crea, lista, edita, "
+        "deshabilita y elimina distribuciones.\n"
+        "✏️ <b>Editar:</b> cambia alias, origen y certificado ACM.\n"
+        "🧹 <b>Caché:</b> invalida todos los objetos usando "
+        "<code>/*</code>.\n"
+        "🔐 <b>ACM:</b> solicita, lista y elimina certificados.\n"
         "👥 <b>Administradores:</b> controla el acceso al bot.\n\n"
         "<b>Comandos:</b>\n"
         "/start - Abrir el menú\n"
@@ -1094,7 +1497,12 @@ def show_help(chat_id, message_id):
         "/id - Mostrar tu ID"
     )
 
-    edit_message(chat_id, message_id, text, main_menu())
+    edit_message(
+        chat_id,
+        message_id,
+        text,
+        main_menu()
+    )
 
 
 def edit_message(chat_id, message_id, text, markup=None):
