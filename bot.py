@@ -154,6 +154,24 @@ def valid_distribution_id(value):
     return bool(value) and value.isalnum()
 
 
+def get_acm_arn_for_domain(domain):
+    """Busca automáticamente el ARN del certificado ACM emitido para un dominio o su wildcard."""
+    try:
+        parts = domain.split(".")
+        wildcard = f"*.{'.'.join(parts[1:])}" if len(parts) > 1 else None
+        
+        paginator = acm.get_paginator('list_certificates')
+        for page in paginator.paginate(CertificateStatuses=['ISSUED']):
+            for cert in page.get('CertificateSummaryList', []):
+                cert_domain = cert.get('DomainName', '')
+                if cert_domain == domain or cert_domain == wildcard:
+                    return cert['CertificateArn']
+        return None
+    except Exception as e:
+        logger.error(f"Error al buscar certificado ACM: {e}")
+        return None
+
+
 # ============================================================
 # MENÚS
 # ============================================================
@@ -322,7 +340,7 @@ def handle_callback(call):
                 chat_id,
                 message_id,
                 "🚀 <b>CREAR DISTRIBUCIÓN CLOUDFRONT</b>\n\n"
-                "Paso 1/3: introduce el dominio personalizado.\n"
+                "Paso 1/2: introduce el dominio personalizado.\n"
                 "Ejemplo: <code>cdn.ejemplo.com</code>"
             )
 
@@ -559,8 +577,8 @@ def handle_create_input(message, state, step, value):
         bot.reply_to(
             message,
             "✅ Alias guardado.\n\n"
-            "Paso 2/3: introduce el dominio del origen.\n"
-            "Ejemplo: <code>origin.ejemplo.com</code>"
+            "Paso 2/2: introduce el dominio del origen (tu VPS).\n"
+            "Ejemplo: <code>origen.ejemplo.com</code>"
         )
 
     elif step == "origin":
@@ -568,53 +586,62 @@ def handle_create_input(message, state, step, value):
             bot.reply_to(message, "⚠️ Origen inválido.")
             return
 
-        state["origin"] = value
-        state["step"] = "certificate_arn"
+        alias = state["alias"]
+        origin = value
+        
+        msg = bot.reply_to(message, "⏳ Buscando el certificado en ACM y creando distribución...")
 
-        bot.reply_to(
-            message,
-            "✅ Origen guardado.\n\n"
-            "Paso 3/3: introduce el ARN del certificado ACM.\n"
-            "Ejemplo: <code>arn:aws:acm:...</code>"
-        )
-
-    elif step == "certificate_arn":
-        if not value.startswith("arn:aws:acm:"):
-            bot.reply_to(message, "⚠️ ARN de ACM inválido.")
+        # Buscar el ARN automáticamente
+        cert_arn = get_acm_arn_for_domain(alias)
+        
+        if not cert_arn:
+            bot.edit_message_text(
+                f"❌ <b>Error:</b> No se encontró un certificado ACM emitido en esta región para <code>{alias}</code> ni su wildcard.\n\n"
+                "Asegúrate de haberlo solicitado y de que esté en estado 'ISSUED'.",
+                chat_id=chat_id,
+                message_id=msg.message_id,
+                parse_mode="HTML"
+            )
+            clear_state(chat_id)
             return
 
         try:
             response = cloudfront.create_distribution(
                 DistributionConfig=build_distribution_config(
-                    alias=state["alias"],
-                    origin=state["origin"],
-                    certificate_arn=value
+                    alias=alias,
+                    origin=origin,
+                    certificate_arn=cert_arn
                 )
             )
 
             distribution = response["Distribution"]
-            alias = state["alias"]
             clear_state(chat_id)
 
-            bot.reply_to(
-                message,
+            bot.edit_message_text(
                 "✅ <b>DISTRIBUCIÓN CREADA</b>\n\n"
                 f"🆔 ID: <code>{distribution['Id']}</code>\n"
                 f"🌐 Dominio CloudFront: "
                 f"<code>{distribution['DomainName']}</code>\n"
+                f"🎯 Origen: <code>{origin}</code>\n"
                 f"📊 Estado: <code>{distribution['Status']}</code>\n\n"
-                "Configura el CNAME:\n"
+                "Configura en tu proveedor DNS (Cloudflare, etc):\n"
                 f"<code>{alias}</code> → "
-                f"<code>{distribution['DomainName']}</code>"
+                f"<code>{distribution['DomainName']}</code>",
+                chat_id=chat_id,
+                message_id=msg.message_id,
+                parse_mode="HTML"
             )
 
         except Exception as error:
-            bot.reply_to(
-                message,
-                f"❌ <b>Error:</b> {safe_error(error)}"
+            bot.edit_message_text(
+                f"❌ <b>Error:</b> {safe_error(error)}",
+                chat_id=chat_id,
+                message_id=msg.message_id,
+                parse_mode="HTML"
             )
 
 
+# === FUNCIÓN PARA SOPORTAR VPN Y WEBSOCKETS ===
 def build_distribution_config(alias, origin, certificate_arn):
     return {
         "CallerReference": f"telegram-{time.time_ns()}",
@@ -630,20 +657,22 @@ def build_distribution_config(alias, origin, certificate_arn):
                 "CustomOriginConfig": {
                     "HTTPPort": 80,
                     "HTTPSPort": 443,
-                    "OriginProtocolPolicy": "https-only",
+                    "OriginProtocolPolicy": "http-only",
                     "OriginSslProtocols": {
                         "Quantity": 1,
                         "Items": ["TLSv1.2"]
-                    }
+                    },
+                    "OriginReadTimeout": 60,
+                    "OriginKeepaliveTimeout": 60
                 }
             }]
         },
         "DefaultCacheBehavior": {
             "TargetOriginId": "origin-1",
-            "ViewerProtocolPolicy": "redirect-to-https",
+            "ViewerProtocolPolicy": "allow-all",
             "AllowedMethods": {
-                "Quantity": 2,
-                "Items": ["GET", "HEAD"],
+                "Quantity": 7,
+                "Items": ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"],
                 "CachedMethods": {
                     "Quantity": 2,
                     "Items": ["GET", "HEAD"]
@@ -689,10 +718,6 @@ def start_edit_distribution(chat_id, message_id, distribution_id):
 
         aliases = config.get("Aliases", {}).get("Items", [])
         origins = config.get("Origins", {}).get("Items", [])
-        certificate = config.get(
-            "ViewerCertificate",
-            {}
-        ).get("ACMCertificateArn", "")
 
         alias = aliases[0] if aliases else ""
         origin = origins[0].get("DomainName", "") if origins else ""
@@ -704,8 +729,7 @@ def start_edit_distribution(chat_id, message_id, distribution_id):
             "etag": response["ETag"],
             "config": config,
             "alias": alias,
-            "origin": origin,
-            "certificate_arn": certificate
+            "origin": origin
         }
 
         edit_message(
@@ -753,24 +777,21 @@ def handle_edit_input(message, state, step, value):
             return
 
         state["origin"] = value
-        state["step"] = "certificate_arn"
-
-        bot.reply_to(
-            message,
-            f"✅ Origen: <code>{value}</code>\n\n"
-            "Certificado actual:\n"
-            f"<code>{state['certificate_arn'] or 'No configurado'}</code>\n"
-            "Envía el nuevo ARN o <code>-</code> "
-            "para conservarlo."
-        )
-
-    elif step == "certificate_arn":
-        if not value.startswith("arn:aws:acm:"):
-            bot.reply_to(message, "⚠️ ARN de ACM inválido.")
+        
+        # Buscar el certificado correspondiente al alias (nuevo o antiguo)
+        alias = state["alias"]
+        cert_arn = get_acm_arn_for_domain(alias)
+        
+        if not cert_arn:
+            bot.reply_to(
+                message, 
+                f"❌ No se encontró un certificado ACM emitido para el dominio <code>{alias}</code>.\n"
+                "Asegúrate de solicitarlo primero."
+            )
+            clear_state(chat_id)
             return
-
-        state["certificate_arn"] = value
-        state["step"] = "confirm"
+            
+        state["certificate_arn"] = cert_arn
 
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
@@ -783,7 +804,7 @@ def handle_edit_input(message, state, step, value):
             "⚠️ <b>CONFIRMA LOS CAMBIOS</b>\n\n"
             f"Alias: <code>{state['alias'] or 'Sin alias'}</code>\n"
             f"Origen: <code>{state['origin']}</code>\n"
-            f"Certificado: <code>{state['certificate_arn']}</code>",
+            f"Certificado (Autodetectado): <code>...{cert_arn[-15:]}</code>",
             reply_markup=markup
         )
 
@@ -1486,7 +1507,7 @@ def show_help(chat_id, message_id):
         "📚 <b>AYUDA DEL SISTEMA</b>\n\n"
         "🌐 <b>CloudFront:</b> crea, lista, edita, "
         "deshabilita y elimina distribuciones.\n"
-        "✏️ <b>Editar:</b> cambia alias, origen y certificado ACM.\n"
+        "✏️ <b>Editar:</b> cambia alias y origen.\n"
         "🧹 <b>Caché:</b> invalida todos los objetos usando "
         "<code>/*</code>.\n"
         "🔐 <b>ACM:</b> solicita, lista y elimina certificados.\n"
@@ -1521,3 +1542,4 @@ def edit_message(chat_id, message_id, text, markup=None):
 if __name__ == "__main__":
     logger.info("Bot AWS iniciado correctamente.")
     bot.infinity_polling(skip_pending=True)
+
