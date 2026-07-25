@@ -657,7 +657,7 @@ def build_distribution_config(alias, origin, certificate_arn):
                 "CustomOriginConfig": {
                     "HTTPPort": 80,
                     "HTTPSPort": 443,
-                    "OriginProtocolPolicy": "http-only",
+                    "OriginProtocolPolicy": "match-viewer",
                     "OriginSslProtocols": {
                         "Quantity": 1,
                         "Items": ["TLSv1.2"]
@@ -690,6 +690,9 @@ def build_distribution_config(alias, origin, certificate_arn):
                 "Enabled": False,
                 "Quantity": 0
             },
+            "GrpcConfig": {
+                "Enabled": True
+            },
             "MinTTL": 0,
             "DefaultTTL": 0,
             "MaxTTL": 0
@@ -701,7 +704,7 @@ def build_distribution_config(alias, origin, certificate_arn):
             "SSLSupportMethod": "sni-only",
             "MinimumProtocolVersion": "TLSv1.2_2021"
         },
-        "HttpVersion": "http2",
+        "HttpVersion": "http2and3",
         "PriceClass": "PriceClass_100"
     }
 
@@ -839,12 +842,23 @@ def confirm_edit_callback(call):
 
         if config.get("Origins", {}).get("Items"):
             config["Origins"]["Items"][0]["DomainName"] = state["origin"]
+            
+            # Forzar 'match-viewer' en la configuración existente
+            if "CustomOriginConfig" in config["Origins"]["Items"][0]:
+                config["Origins"]["Items"][0]["CustomOriginConfig"]["OriginProtocolPolicy"] = "match-viewer"
 
         config["ViewerCertificate"] = {
             "ACMCertificateArn": state["certificate_arn"],
             "SSLSupportMethod": "sni-only",
             "MinimumProtocolVersion": "TLSv1.2_2021"
         }
+
+        # Forzar gRPC en la configuración existente
+        if "DefaultCacheBehavior" in config:
+            config["DefaultCacheBehavior"]["GrpcConfig"] = {"Enabled": True}
+
+        # Asegurar HTTP/2 o HTTP/3
+        config["HttpVersion"] = "http2and3"
 
         config["Comment"] = (
             f"Managed by Telegram - {state['alias']}"
@@ -1542,4 +1556,3 @@ def edit_message(chat_id, message_id, text, markup=None):
 if __name__ == "__main__":
     logger.info("Bot AWS iniciado correctamente.")
     bot.infinity_polling(skip_pending=True)
-
